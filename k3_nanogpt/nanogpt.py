@@ -139,13 +139,35 @@ class MultiHeadedAttention(nn.Module):
 
 class FeedForward(nn.Module):
 
-    def __init__(self, input_dim, output_dim):
+    def __init__(self, n_embd):
         super().__init__()
-        self.net = nn.Sequential(nn.Linear(input_dim, output_dim), 
+
+        ffwd_constant = 4 # constant comes from transformer paper
+        intermediate_embd = ffwd_constant * n_embd
+
+        self.net = nn.Sequential(nn.Linear(n_embd, intermediate_embd), 
                                  nn.ReLU())
+        # residual layer technique
+        self.projection = nn.Linear(intermediate_embd, n_embd)
     
     def forward(self, x):
-        return self.net(x)
+        x = self.net(x)
+        x = self.projection(x)
+        return x
+
+class TransformerBlock(nn.Module):
+    """" Transformer block : communication via attention followed up computation """
+
+    def __init__(self, n_embd, n_head):
+        super().__init__()
+        single_attention_head_size = n_embd // n_head 
+        self.sa = MultiHeadedAttention(n_head, single_attention_head_size) # in: (B, T, n_embd), out : (B, T, n_embd)
+        self.ffwd = FeedForward(n_embd) # in: (B, T, n_embd), out : (B, T, n_embd)
+
+    def forward(self, x):
+        x = x + self.sa(x) # x+ comes from residual connection
+        x = x + self.ffwd(x)
+        return x
 
 
 class BigramLanguageModel(nn.Module):
@@ -171,9 +193,18 @@ class BigramLanguageModel(nn.Module):
         # self.sa_head = AttentionHead(num_heads=4, head_size=n_embd) # V1
 
         # V2 - multiheaded attention
-        self.sa_head = MultiHeadedAttention(num_heads=4, head_size=n_embd//4) # in: (B, T, H) , out: (B, T, H)
-        self.ffwd = FeedForward(H, H) # in: (B, T, H) , out: (B, T, H) 
-        self.lm_head = nn.Linear(H, C) # in: (B, T, H), out: (B, T, C)
+        # self.sa_head = MultiHeadedAttention(num_heads=4, head_size=n_embd//4) # in: (B, T, H) , out: (B, T, H)
+        # self.ffwd = FeedForward(H) # in: (B, T, H) , out: (B, T, H) 
+        # self.lm_head = nn.Linear(H, C) # in: (B, T, H), out: (B, T, C)
+
+        # V3 - transformer block
+        self.transformer_blocks = nn.Sequential(
+            TransformerBlock(n_embd, n_head=4),
+            TransformerBlock(n_embd, n_head=4),
+            TransformerBlock(n_embd, n_head=4)
+        )
+        self.lm_head = nn.Linear(n_embd, vocab_size)
+
 
 
     def forward(self, idx, targets=None):
@@ -185,9 +216,13 @@ class BigramLanguageModel(nn.Module):
         pos_emb = self.position_embedding_table(torch.arange(T, device=device)) # (T,C)
         x = tok_emb + pos_emb
 
-        # transform x 
-        x = self.sa_head(x) 
-        x = self.ffwd(x)
+        # V2 - multiheaded attention
+        # x = self.sa_head(x) 
+        # x = self.ffwd(x)
+        # logits = self.lm_head(x)
+
+        # V3 - transformer block
+        x = self.transformer_blocks(x)
         logits = self.lm_head(x)
 
         if targets is None:
