@@ -11,8 +11,13 @@ batch_size = 32
 block_size = 8
 vocab_size = 65
 n_embd = 32
+
 head_size = n_embd
 num_heads = 4
+n_head = 6
+
+n_layer = 6
+dropout = 0.2
 
 max_iters = 5000
 eval_interval = 500
@@ -88,6 +93,8 @@ class AttentionHead(nn.Module):
 
         self.register_buffer("tril", torch.tril(torch.ones(block_size, block_size)))
 
+        self.dropout = nn.Dropout(dropout)
+
     def forward(self, x):
 
         B, T, C = x.shape
@@ -109,6 +116,7 @@ class AttentionHead(nn.Module):
         attention_values = attention_values * normalization_constant # (B, T, T)
         attention_values = attention_values.masked_fill(triangle == 0, float('-inf')) # (B, T, T), 
         attention_weights = F.softmax(attention_values, dim=-1) # (B, T, T)
+        attention_weights = self.dropout(attention_weights)
 
         # compute weighted aggregation of attention scores and values
         v = self.value(x)  # (B, T, H)
@@ -130,11 +138,15 @@ class MultiHeadedAttention(nn.Module):
         """
         super().__init__()
         self.heads = nn.ModuleList([AttentionHead(n_embd, head_size) for _ in range(num_heads)])
+        self.proj = nn.Linear(n_embd, n_embd)
+        self.dropout = nn.Dropout(dropout)
     
     def forward(self, x):
         # each h(x) is a single attention head
         # h(x) output is (B, T, H)
-        return torch.cat([h(x) for h in self.heads], dim=-1) # since we're stacking on dim=-1, we want this value to equal H
+        out = torch.cat([h(x) for h in self.heads], dim=-1) # since we're stacking on dim=-1, we want this value to equal H
+        out = self.dropout(self.proj(out))
+        return out
     
 
 class FeedForward(nn.Module):
@@ -146,13 +158,13 @@ class FeedForward(nn.Module):
         intermediate_embd = ffwd_constant * n_embd
 
         self.net = nn.Sequential(nn.Linear(n_embd, intermediate_embd), 
-                                 nn.ReLU())
-        # residual layer technique
-        self.projection = nn.Linear(intermediate_embd, n_embd)
+                                 nn.ReLU(),
+                                 nn.Linear(intermediate_embd, n_embd), # residual layer
+                                 nn.Dropout(dropout)
+                                 )
     
     def forward(self, x):
         x = self.net(x)
-        x = self.projection(x)
         return x
 
 class TransformerBlock(nn.Module):
@@ -164,9 +176,22 @@ class TransformerBlock(nn.Module):
         self.sa = MultiHeadedAttention(n_head, single_attention_head_size) # in: (B, T, n_embd), out : (B, T, n_embd)
         self.ffwd = FeedForward(n_embd) # in: (B, T, n_embd), out : (B, T, n_embd)
 
+        self.layer_norm_1 = nn.LayerNorm(n_embd)
+        self.layer_norm_2 = nn.LayerNorm(n_embd)
+
     def forward(self, x):
-        x = x + self.sa(x) # x+ comes from residual connection
-        x = x + self.ffwd(x)
+
+        # V1
+        # x = self.sa(x) 
+        # x = self.ffwd(x)
+
+        # V2 - add residual connection
+        # x = x + self.sa(x) 
+        # x = x + self.ffwd(x)
+
+        # V3 
+        x = x + self.sa(self.layer_norm_1(x))
+        x = x + self.ffwd(self.layer_norm_2(x))
         return x
 
 
@@ -198,13 +223,17 @@ class BigramLanguageModel(nn.Module):
         # self.lm_head = nn.Linear(H, C) # in: (B, T, H), out: (B, T, C)
 
         # V3 - transformer block
-        self.transformer_blocks = nn.Sequential(
-            TransformerBlock(n_embd, n_head=4),
-            TransformerBlock(n_embd, n_head=4),
-            TransformerBlock(n_embd, n_head=4)
-        )
-        self.lm_head = nn.Linear(n_embd, vocab_size)
+        # self.transformer_blocks = nn.Sequential(
+        #     TransformerBlock(n_embd, n_head=4),
+        #     TransformerBlock(n_embd, n_head=4),
+        #     TransformerBlock(n_embd, n_head=4),
+        #     nn.LayerNorm(n_embd)
+        # )
 
+        # V4 - scaling up 
+        self.blocks = nn.Sequential(*[TransformerBlock(n_embd, n_head=4) for _ in range(n_layer)])
+        self.layer_norm_final = nn.LayerNorm(n_embd)
+        self.lm_head = nn.Linear(n_embd, vocab_size)
 
 
     def forward(self, idx, targets=None):
@@ -222,8 +251,14 @@ class BigramLanguageModel(nn.Module):
         # logits = self.lm_head(x)
 
         # V3 - transformer block
-        x = self.transformer_blocks(x)
+        # x = self.transformer_blocks(x)
+        # logits = self.lm_head(x)
+
+        # V4 - scaling up transformer blocks
+        x = self.blocks(x)
+        x = self.layer_norm_final(x)
         logits = self.lm_head(x)
+
 
         if targets is None:
             loss = None
