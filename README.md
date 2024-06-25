@@ -11,6 +11,7 @@ This repository is my implementation for `Andrej Karpathy's` [Neural Networks: Z
 | Makemore | [BackProp]() | Not started | [BackProp Original Notebook](https://github.com/karpathy/nn-zero-to-hero/blob/master/lectures/makemore/makemore_part4_backprop.ipynb)
 | Makemore | [Wavenet]() | Not started | [Wavenet Original Notebook](https://github.com/karpathy/nn-zero-to-hero/blob/master/lectures/makemore/makemore_part5_cnn1.ipynb)
 | NanoGPT | [NanoGPT]() | Not started | [nanoGPT Original Notebook](https://github.com/karpathy/ng-video-lecture)
+| GPT-2 | [GPT-2]() | Not started | [GPT-2 video](https://www.youtube.com/watch?v=l8pRSuU81PU&list=PPSV)
 
 
 # References
